@@ -1,0 +1,12 @@
+.gradle/
+build/
+local.properties
+.idea/
+*.iml
+.DS_Store
+captures/
+.kotlin/
+sons-previa/
+*.jks
+*.keystore
+truco-acessivel.apk
