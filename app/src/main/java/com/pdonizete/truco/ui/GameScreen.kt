@@ -63,7 +63,7 @@ private class Action(val label: String, val color: Color, val onClick: () -> Uni
 fun GameScreen(vm: AppViewModel) {
     val askExit = rememberConfirm("Deseja sair da partida?") { vm.backToMenu() }
     val askRun = rememberConfirm("Deseja mesmo correr?") { vm.respond(Response.CORRER) }
-    val askRunEleven = rememberConfirm("Deseja correr da mão de onze? O computador ganha 1 ponto.") { vm.decideEleven(false) }
+    val askRunEleven = rememberConfirm(vm.runElevenQuestion()) { vm.decideEleven(false) }
     BackHandler { askExit() }
 
     // A mão é mutável: ler [version] faz a tela se redesenhar a cada jogada.
@@ -238,6 +238,8 @@ fun GameScreen(vm: AppViewModel) {
                 }
             }
 
+            vm.partnerCardsText(h)?.let { Text(it, fontSize = 15.sp, textAlign = TextAlign.Center) }
+
             SectionTitle("Ações", size = 18, top = 6.dp)
             actions.chunked(2).forEachIndexed { r, row ->
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -261,9 +263,9 @@ fun GameScreen(vm: AppViewModel) {
 
 /** Cartas da rodada em andamento (ou da última rodada, se a mesa acabou de ser limpa). */
 @Composable
-private fun TableArea(vm: AppViewModel, h: Hand, cardW: Dp, modifier: Modifier) {
+private fun TableArea(vm: AppViewModel, h: Hand, cardMax: Dp, modifier: Modifier) {
     val plays = if (h.table.isEmpty() && h.tricks.isNotEmpty()) h.tricks.last().plays else h.table
-    Box(
+    BoxWithConstraints(
         modifier
             .clip(RoundedCornerShape(12.dp))
             .background(Palette.Felt)
@@ -271,14 +273,20 @@ private fun TableArea(vm: AppViewModel, h: Hand, cardW: Dp, modifier: Modifier) 
             .clearAndSetSemantics { contentDescription = vm.tableText(h) },
         contentAlignment = Alignment.Center,
     ) {
+        // Duas cartas por fileira; com 3 ou 4 cartas (duplas) são duas fileiras.
+        // O tamanho das cartas sai do espaço que a mesa tem na tela.
+        val gap = 12.dp
+        val rows = if (plays.size > 2) 2 else 1
+        val byWidth = (maxWidth - gap) / 2
+        val byHeight = ((maxHeight - 44.dp) / rows - 20.dp) / 1.45f
+        val cardW = minOf(cardMax, byWidth, byHeight).coerceAtLeast(36.dp)
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            if (plays.isEmpty()) {
-                Text("Mesa vazia", fontSize = 16.sp)
-            } else {
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    plays.forEach { p ->
+            if (plays.isEmpty()) Text("Mesa vazia", fontSize = 16.sp)
+            plays.chunked(2).forEach { row ->
+                Row(horizontalArrangement = Arrangement.spacedBy(gap)) {
+                    row.forEach { p ->
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(if (p.player == ME) "Você" else "Computador", fontSize = 14.sp)
+                            Text(vm.seats.shortName(p.player), fontSize = 14.sp, maxLines = 1)
                             CardFace(p.card, h.vira, width = cardW, faceDown = p.covered)
                         }
                     }
@@ -286,7 +294,7 @@ private fun TableArea(vm: AppViewModel, h: Hand, cardW: Dp, modifier: Modifier) 
             }
             val line = vm.tricksLine(h)
             if (line.isNotEmpty()) Text(line, fontSize = 14.sp, textAlign = TextAlign.Center)
-            Text("Computador: ${vm.cardsCount(h.hands[CPU].size)}", fontSize = 14.sp)
+            Text(vm.othersCardsShort(h), fontSize = 14.sp, textAlign = TextAlign.Center)
         }
     }
 }

@@ -252,4 +252,20 @@ class HandTest {
         assertNull(h.tricks[2].winnerSide)
         assertEquals(HandResult(0, 1, EndReason.RODADAS), h.result)
     }
+
+    @Test fun fourPlayersRaisesAlternateBetweenPairs() {
+        val h = Hand(4, 0, listOf(cards("3c 4c 5c"), cards("2e Ke 6e"), cards("3o 5o 6o"), cards("Ap Kp 5p")), c("7o"))
+        assertTrue(h.requestRaise(0))
+        assertTrue(h.respond(1, Response.ACEITAR))
+        h.play(0, c("3c"))
+        assertTrue(h.canRaise(1))
+        h.play(1, c("2e"))
+        assertFalse(h.canRaise(2)) // a dupla do jogador 2 pediu por último
+        h.play(2, c("3o"))
+        assertTrue(h.requestRaise(3))
+        assertEquals(RaiseRequest(1, 6), h.pending)
+        assertFalse(h.respond(1, Response.ACEITAR))
+        assertTrue(h.respond(0, Response.CORRER))
+        assertEquals(HandResult(1, 3, EndReason.CORREU), h.result)
+    }
 }

@@ -18,6 +18,7 @@ import com.pdonizete.truco.game.HandMode
 import com.pdonizete.truco.game.Match
 import com.pdonizete.truco.game.PlayedCard
 import com.pdonizete.truco.game.Response
+import com.pdonizete.truco.game.Seats
 import com.pdonizete.truco.game.WINNING_SCORE
 import com.pdonizete.truco.game.Words
 import com.pdonizete.truco.game.nextRaise
@@ -30,9 +31,12 @@ import kotlinx.coroutines.launch
 
 enum class Screen { MENU, GAME, HELP, SETTINGS }
 
-/** Você é o jogador 0 (lado 0). O computador é o jogador 1 (lado 1). */
+/**
+ * Você é sempre o jogador 0, e o seu lado (você ou a sua dupla) é o lado 0.
+ * Com 4 jogadores a ordem é: você, adversário da direita, parceiro, adversário da esquerda.
+ */
 const val ME = 0
-const val CPU = 1
+const val MY_SIDE = 0
 
 class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val prefs = app.getSharedPreferences("truco", Context.MODE_PRIVATE)
@@ -56,6 +60,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val voiceActive: Boolean get() = screenReaderOn && voiceOn
 
     var match by mutableStateOf<Match?>(null); private set
+
+    /** Nomes dos lugares da mesa na partida atual (1 contra 1 ou duplas). */
+    var seats by mutableStateOf(Seats(2)); private set
 
     /** A mão é um objeto mutável: [version] muda a cada jogada para a tela se redesenhar. */
     var version by mutableIntStateOf(0); private set
@@ -123,13 +130,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---------------- Partida
 
-    fun startMatch() {
+    /** [players] = 2 para 1 contra 1, 4 para duplas. Sem argumento, repete o tipo da última partida. */
+    fun startMatch(players: Int = seats.players) {
         stopGame()
         ai = Ai(difficulty)
         settledHand = null
-        match = Match(players = 2, coveredAllowed = coveredOption)
+        seats = Seats(players)
+        match = Match(players = players, coveredAllowed = coveredOption)
         screen = Screen.GAME
-        deal("Nova partida contra o computador, nível ${difficulty.label}. ")
+        val kind = if (players == 4) "em duplas" else "contra o computador"
+        deal("Nova partida $kind, nível ${difficulty.label}. ")
     }
 
     fun nextHand() {
@@ -145,9 +155,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         say(intro + "Embaralhando.", flush = true)
         sfx.playShuffle()
         val gen = generation
+        val cards = seats.players * 3
+        val gap = if (seats.duo) 60L else 90L
         viewModelScope.launch(gameJobs) {
             delay(1100)
-            repeat(6) { sfx.playDeal(); delay(90) }
+            repeat(cards) { sfx.playDeal(); delay(gap) }
             delay(60)
             sfx.playVira()
             delay(200)
@@ -159,14 +171,23 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun handIntro(h: Hand): String {
+        val s = seats
         val sb = StringBuilder(viraText(h)).append(' ')
-        sb.append(if (h.starter == ME) "Você é mão. " else "O computador é mão. ")
+        sb.append(if (h.starter == ME) "Você é mão. " else "${s.who(h.starter)} é mão. ")
         when (h.mode) {
-            HandMode.MAO_DE_ONZE -> sb.append(
-                if (h.elevenSide == ME) "Mão de onze! Você tem 11 pontos. Veja suas cartas e decida se joga valendo 3 ou corre. "
-                else "Mão de onze! O computador tem 11 pontos e vai decidir se joga. ",
-            )
-            HandMode.MAO_DE_FERRO -> sb.append("Mão de ferro! Os dois têm 11 pontos. As cartas estão cobertas e a mão vale 1. ")
+            HandMode.MAO_DE_ONZE -> if (h.elevenSide == MY_SIDE) {
+                sb.append(
+                    if (s.duo) "Mão de onze! Sua dupla tem 11 pontos. Veja as suas cartas e as do parceiro e decida se joga valendo 3 ou corre. "
+                    else "Mão de onze! Você tem 11 pontos. Veja suas cartas e decida se joga valendo 3 ou corre. ",
+                )
+                partnerCardsText(h)?.let { sb.append(it).append(' ') }
+            } else {
+                sb.append(
+                    if (s.duo) "Mão de onze! Os adversários têm 11 pontos e vão decidir se jogam. "
+                    else "Mão de onze! O computador tem 11 pontos e vai decidir se joga. ",
+                )
+            }
+            HandMode.MAO_DE_FERRO -> sb.append("Mão de ferro! Os dois lados têm 11 pontos. As cartas estão cobertas e a mão vale 1. ")
             HandMode.NORMAL -> {}
         }
         return sb.toString()
@@ -203,7 +224,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun respond(r: Response) {
         val h = match?.hand ?: return
         val p = h.pending ?: return
-        if (p.responderSide != ME || !h.respond(ME, r)) return
+        if (p.responderSide != MY_SIDE || !h.respond(MY_SIDE, r)) return
         when (r) {
             Response.ACEITAR -> advance("Você aceitou. A mão vale ${Words.points(p.value)}. ")
             Response.AUMENTAR -> trucoThen("Você pediu ${Words.raiseName(h.pending!!.value)}! ")
@@ -213,24 +234,25 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun decideEleven(play: Boolean) {
         val h = match?.hand ?: return
-        if (h.elevenSide != ME || !h.decideEleven(play)) return
+        if (h.elevenSide != MY_SIDE || !h.decideEleven(play)) return
         advance(if (play) "Você vai jogar a mão de onze. A mão vale 3. " else "Você correu da mão de onze. ")
     }
 
     private fun whyNot(h: Hand): String {
+        val s = seats
         val p = h.pending
         return when {
             dealing -> "Espere, as cartas estão sendo dadas."
             h.isOver -> "A mão terminou."
-            h.awaitingEleven && h.elevenSide == ME -> "Primeiro decida se joga a mão de onze."
-            h.awaitingEleven -> "Espere o computador decidir a mão de onze."
-            p != null && p.responderSide == ME -> "Responda ao pedido primeiro."
-            p != null -> "Espere a resposta do computador."
-            else -> "Espere, é a vez do computador."
+            h.awaitingEleven && h.elevenSide == MY_SIDE -> "Primeiro decida se joga a mão de onze."
+            h.awaitingEleven -> "Espere ${s.them} ${s.themVerb("decidir", "decidirem")} a mão de onze."
+            p != null && p.responderSide == MY_SIDE -> "Responda ao pedido primeiro."
+            p != null -> "Espere a resposta ${s.ofThem}."
+            else -> "Espere, é a vez ${s.of(h.current)}."
         }
     }
 
-    // ---------------- Computador
+    // ---------------- Computador (adversários e parceiro)
 
     /** Só a última jogada agendada do computador vale; agendamentos antigos são ignorados. */
     private var cpuTicket = 0
@@ -244,32 +266,49 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val m = match ?: return
         val h = m.hand
         if (h.isOver || dealing) return
-        val mine = m.score[CPU]
-        val theirs = m.score[ME]
+        val s = seats
         val p = h.pending
         when {
-            h.awaitingEleven && h.elevenSide == CPU -> {
-                val play = ai.playEleven(h, CPU, mine, theirs)
+            h.awaitingEleven -> {
+                val side = h.elevenSide ?: return
+                if (side == MY_SIDE) return
+                val who = bestOf(m, side)
+                val play = ai.playEleven(h, who, m.score[side], m.score[1 - side])
                 h.decideEleven(play)
-                advance(if (play) "O computador vai jogar a mão de onze. A mão vale 3. " else "O computador correu da mão de onze. ")
+                advance(
+                    if (play) "${s.sideWho(side)} ${s.verb(side, "vai", "vão")} jogar a mão de onze. A mão vale 3. "
+                    else "${s.sideWho(side)} ${s.verb(side, "correu", "correram")} da mão de onze. ",
+                )
             }
-            p != null && p.responderSide == CPU -> {
-                var r = ai.respond(h, CPU, mine, theirs)
-                if (!h.respond(CPU, r)) { r = Response.ACEITAR; h.respond(CPU, r) }
+            p != null -> {
+                val side = p.responderSide
+                if (side == MY_SIDE) return
+                val who = bestOf(m, side)
+                var r = ai.respond(h, who, m.score[side], m.score[1 - side])
+                if (!h.respond(side, r)) { r = Response.ACEITAR; h.respond(side, r) }
                 when (r) {
-                    Response.ACEITAR -> advance("O computador aceitou. A mão vale ${Words.points(p.value)}. ")
-                    Response.AUMENTAR -> trucoThen("O computador pediu ${Words.raiseName(h.pending!!.value)}! ")
-                    Response.CORRER -> advance("O computador correu. ")
+                    Response.ACEITAR -> advance("${s.who(who)} aceitou. A mão vale ${Words.points(p.value)}. ")
+                    Response.AUMENTAR -> trucoThen("${s.who(who)} pediu ${Words.raiseName(h.pending!!.value)}! ")
+                    Response.CORRER -> advance("${s.who(who)} correu. ")
                 }
             }
-            p == null && h.canPlay(CPU) -> {
-                if (ai.shouldRaise(h, CPU, mine, theirs) && h.requestRaise(CPU)) {
-                    trucoThen("O computador pediu ${Words.raiseName(h.pending!!.value)}! ")
+            h.current != ME && h.canPlay(h.current) -> {
+                val who = h.current
+                val side = h.sideOf(who)
+                if (ai.shouldRaise(h, who, m.score[side], m.score[1 - side]) && h.requestRaise(who)) {
+                    trucoThen("${s.who(who)} pediu ${Words.raiseName(h.pending!!.value)}! ")
                 } else {
-                    playMove(CPU, ai.chooseCard(h, CPU), false)?.let { advance(it) }
+                    playMove(who, ai.chooseCard(h, who), false)?.let { advance(it) }
                 }
             }
         }
+    }
+
+    /** Quem decide pelo lado [side] (resposta ao truco, mão de onze): o jogador com a mão mais forte. */
+    private fun bestOf(m: Match, side: Int): Int {
+        val h = m.hand
+        return (0 until h.players).filter { h.sideOf(it) == side }
+            .maxBy { ai.confidence(h, it, m.score[side], m.score[1 - side]) }
     }
 
     // ---------------- Andamento e anúncios
@@ -279,17 +318,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val before = h.tricks.size
         if (!h.play(player, card, covered)) return null
         sfx.playCard()
-        val sb = StringBuilder(if (player == ME) "Você jogou " else "O computador jogou ")
+        val s = seats
+        val sb = StringBuilder("${s.who(player)} jogou ")
         sb.append(Words.cardLower(card, h.vira)).append(if (covered) ", coberta. " else ". ")
         if (h.tricks.size > before) {
             val ord = Words.trickOrdinal(h.tricks.size - 1)
-            sb.append(
-                when (h.tricks.last().winnerSide) {
-                    null -> "A $ord rodada cangou. "
-                    ME -> "Você ganhou a $ord rodada. "
-                    else -> "O computador ganhou a $ord rodada. "
-                },
-            )
+            val wp = h.tricks.last().winnerPlayer
+            sb.append(if (wp == null) "A $ord rodada cangou. " else "${s.who(wp)} ganhou a $ord rodada. ")
         }
         return sb.toString()
     }
@@ -315,11 +350,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         when {
             h.awaitingEleven -> {
                 say(text)
-                if (h.elevenSide == ME) focusActions() else cpuLater()
+                if (h.elevenSide == MY_SIDE) focusActions() else cpuLater()
             }
-            p != null && p.responderSide == ME -> {
+            p != null && p.responderSide == MY_SIDE -> {
                 val up = nextRaise(p.value)
-                text.append(if (up != null && h.canEscalate(ME)) "Aceita, aumenta para ${Words.raiseName(up)} ou corre?" else "Aceita ou corre?")
+                text.append(if (up != null && h.canEscalate(MY_SIDE)) "Aceita, aumenta para ${Words.raiseName(up)} ou corre?" else "Aceita ou corre?")
                 say(text)
                 focusActions()
             }
@@ -340,24 +375,22 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (settledHand === m.hand) return
         settledHand = m.hand
         val r = m.settle()
+        val s = seats
+        val side = r.winnerSide
         val pts = Words.points(r.points)
-        val mine = r.winnerSide == ME
         text.append(
-            when {
-                r.reason == EndReason.RODADAS && mine -> "Você ganhou a mão e fez $pts. "
-                r.reason == EndReason.RODADAS -> "O computador ganhou a mão e fez $pts. "
-                mine -> "Você fez $pts. "
-                else -> "O computador fez $pts. "
+            if (r.reason == EndReason.RODADAS) {
+                "${s.sideWho(side)} ${s.verb(side, "ganhou", "ganharam")} a mão e ${s.verb(side, "fez", "fizeram")} $pts. "
+            } else {
+                "${s.sideWho(side)} ${s.verb(side, "fez", "fizeram")} $pts. "
             },
         )
         text.append("Placar: ${scoreSpoken()}. ")
         if (m.isOver) {
-            if (m.winnerSide == ME) {
-                text.append("Você venceu a partida!")
-                sfx.playApplause()
-            } else {
-                text.append("O computador venceu a partida.")
-            }
+            val w = m.winnerSide!!
+            text.append("${s.sideWho(w)} ${s.verb(w, "venceu", "venceram")} a partida")
+            text.append(if (w == MY_SIDE) "!" else ".")
+            if (w == MY_SIDE) sfx.playApplause()
         }
         bump()
         say(text)
@@ -376,29 +409,41 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         sb.append(viraText(h)).append(' ')
         sb.append(tableText(h)).append(' ')
         sb.append(myCardsText(h)).append(' ')
+        partnerCardsText(h)?.let { sb.append(it).append(' ') }
         sb.append(situation(m, h))
         say(sb, flush = true)
     }
 
     private fun situation(m: Match, h: Hand): String {
+        val s = seats
         val p = h.pending
         return when {
             m.isOver -> "A partida terminou."
             h.isOver -> "A mão terminou. Use o botão Próxima mão."
-            h.awaitingEleven && h.elevenSide == ME -> "Decida se joga a mão de onze."
-            h.awaitingEleven -> "O computador está decidindo a mão de onze."
-            p != null && p.responderSide == ME -> "O computador pediu ${Words.raiseName(p.value)}. Aceita, aumenta ou corre?"
-            p != null -> "Você pediu ${Words.raiseName(p.value)}. Esperando o computador."
+            h.awaitingEleven && h.elevenSide == MY_SIDE -> "Decida se joga a mão de onze."
+            h.awaitingEleven -> "${s.sideWho(1)} ${s.verb(1, "está", "estão")} decidindo a mão de onze."
+            p != null && p.responderSide == MY_SIDE -> {
+                val ask = if (h.canEscalate(MY_SIDE)) "Aceita, aumenta ou corre?" else "Aceita ou corre?"
+                "${s.sideWho(p.requesterSide)} ${s.verb(p.requesterSide, "pediu", "pediram")} ${Words.raiseName(p.value)}. $ask"
+            }
+            p != null -> "${s.sideWho(p.requesterSide)} ${s.verb(p.requesterSide, "pediu", "pediram")} ${Words.raiseName(p.value)}. Esperando ${s.them}."
             h.current == ME -> "Sua vez."
-            else -> "Vez do computador."
+            else -> "Vez ${s.of(h.current)}."
         }
     }
 
     // ---------------- Textos da tela
 
-    fun scoreDisplay(): String = match?.score?.let { "Você ${it[ME]}  ×  ${it[CPU]} Computador" } ?: ""
-    fun scoreSpoken(): String = match?.score?.let { "você ${it[ME]}, computador ${it[CPU]}" } ?: ""
-    fun scoreDescription(): String = "Você ${match?.score?.get(ME)}, computador ${match?.score?.get(CPU)}. Partida até $WINNING_SCORE."
+    fun scoreDisplay(): String =
+        match?.score?.let { "${seats.sideShort(0)} ${it[0]}  ×  ${it[1]} ${seats.sideShort(1)}" } ?: ""
+
+    fun scoreSpoken(): String =
+        match?.score?.let { "${seats.sideSpoken(0)} ${it[0]}, ${seats.sideSpoken(1)} ${it[1]}" } ?: ""
+
+    fun scoreDescription(): String = scoreSpoken().replaceFirstChar { it.uppercase() } + ". Partida até $WINNING_SCORE."
+
+    fun runElevenQuestion(): String =
+        "Deseja correr da mão de onze? ${seats.them.replaceFirstChar { it.uppercase() }} ${seats.themVerb("ganha", "ganham")} 1 ponto."
 
     fun handValueText(h: Hand): String {
         if (h.awaitingEleven) return "Mão de onze: vale 3 se for jogada"
@@ -425,7 +470,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun playLabel(h: Hand, p: PlayedCard): String {
-        val who = if (p.player == ME) "você" else "computador"
+        val who = seats.noun(p.player)
         val what = when {
             p.covered && p.player == ME -> "${Words.cardLower(p.card, h.vira)}, coberta"
             p.covered -> "carta coberta"
@@ -439,26 +484,25 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         h.tricks.forEachIndexed { i, t ->
             sb.append(Words.trickOrdinal(i).replaceFirstChar { it.uppercase() }).append(" rodada, ")
             sb.append(t.plays.joinToString(", ") { playLabel(h, it) })
-            sb.append(
-                when (t.winnerSide) {
-                    null -> ". Cangou. "
-                    ME -> ". Você ganhou. "
-                    else -> ". O computador ganhou. "
-                },
-            )
+            val wp = t.winnerPlayer
+            sb.append(if (wp == null) ". Cangou. " else ". ${seats.who(wp)} ganhou. ")
         }
         if (h.table.isNotEmpty()) sb.append("Na mesa: ").append(h.table.joinToString(", ") { playLabel(h, it) }).append(". ")
         else if (!h.isOver) sb.append("Mesa vazia. ")
-        sb.append("O computador tem ${cardsCount(h.hands[CPU].size)}.")
+        sb.append(othersCardsText(h))
         return sb.toString()
     }
 
+    private fun othersCardsText(h: Hand): String =
+        if (!seats.duo) "O computador tem ${cardsCount(h.hands[1].size)}."
+        else "Cartas na mão: " + (1 until h.players).joinToString(", ") { "${seats.noun(it)} com ${cardsCount(h.hands[it].size)}" } + "."
+
+    fun othersCardsShort(h: Hand): String =
+        if (!seats.duo) "Computador: ${cardsCount(h.hands[1].size)}"
+        else (1 until h.players).joinToString("  ·  ") { "${seats.shortName(it)} ${h.hands[it].size}" }
+
     fun tricksLine(h: Hand): String = h.tricks.mapIndexed { i, t ->
-        "${i + 1}ª: " + when (t.winnerSide) {
-            null -> "cangou"
-            ME -> "você"
-            else -> "computador"
-        }
+        "${i + 1}ª: " + (t.winnerSide?.let { seats.sideShort(it).lowercase() } ?: "cangou")
     }.joinToString("  ·  ")
 
     private fun myCardsText(h: Hand): String {
@@ -468,6 +512,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             h.blind -> "Suas cartas: ${cardsCount(cards.size)} cobertas."
             else -> "Suas cartas: " + cards.joinToString(", ") { Words.cardLower(it, h.vira) } + "."
         }
+    }
+
+    /** Na mão de onze da sua dupla, você vê as cartas do parceiro antes de decidir. */
+    fun partnerCardsText(h: Hand): String? {
+        if (!seats.duo || !h.awaitingEleven || h.elevenSide != MY_SIDE) return null
+        return "Cartas do parceiro: " + h.hands[2].joinToString(", ") { Words.cardLower(it, h.vira) } + "."
     }
 
     // ---------------- Utilidades

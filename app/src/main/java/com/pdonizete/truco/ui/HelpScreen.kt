@@ -53,6 +53,13 @@ private val HELP: List<Pair<String, List<String>>> = listOf(
     "Carta coberta" to listOf(
         "É uma opção das configurações. Ligada, a partir da segunda rodada você pode jogar uma carta virada para baixo. A carta coberta perde para qualquer carta aberta.",
     ),
+    "Duplas" to listOf(
+        "Na partida em duplas, você joga com um parceiro contra dois adversários. Os três são controlados pelo computador.",
+        "A ordem na mesa é: você, o adversário da direita, o parceiro e o adversário da esquerda. Quem é mão passa para o próximo a cada mão.",
+        "A rodada fica com a dupla que jogou a carta mais forte. Se as cartas mais fortes forem de duplas diferentes e empatarem, a rodada cangou.",
+        "Quando a sua dupla pede truco, os adversários respondem. Quando os adversários pedem, quem responde é você.",
+        "Na mão de onze da sua dupla, você ouve as cartas do parceiro antes de decidir se joga ou corre.",
+    ),
     "Partida" to listOf("Vence quem chegar primeiro a 12 pontos."),
     "Créditos" to listOf("Inspirado no Dominó G, de geofilho."),
 )

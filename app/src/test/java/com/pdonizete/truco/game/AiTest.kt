@@ -95,6 +95,53 @@ class AiTest {
         }
     }
 
+    @Test fun fourPlayerAiMatchesFinishConsistently() {
+        repeat(300) { seed ->
+            val m = Match(players = 4, random = Random(seed), coveredAllowed = seed % 2 == 1)
+            val ai = Ai(Difficulty.entries[seed % 3], Random(seed * 13 + 5))
+            var handsPlayed = 0
+            while (true) {
+                val h = m.hand
+                assertEquals(4, h.players)
+                var steps = 0
+                while (!h.isOver) {
+                    assertTrue(steps++ < 200)
+                    val pend = h.pending
+                    when {
+                        h.awaitingEleven -> {
+                            val s = h.elevenSide!!
+                            assertTrue(h.decideEleven(ai.playEleven(h, s, m.score[s], m.score[1 - s])))
+                        }
+                        pend != null -> {
+                            val s = pend.responderSide
+                            val who = s + 2 * (steps % 2)
+                            assertTrue(h.respond(s, ai.respond(h, who, m.score[s], m.score[1 - s])))
+                        }
+                        else -> {
+                            val p = h.current
+                            val s = h.sideOf(p)
+                            if (ai.shouldRaise(h, p, m.score[s], m.score[1 - s])) {
+                                assertTrue(h.requestRaise(p))
+                            } else {
+                                assertTrue(h.play(p, ai.chooseCard(h, p)))
+                            }
+                        }
+                    }
+                    assertCardsConsistent(h)
+                }
+                val starter = h.starter
+                val r = m.settle()
+                assertTrue(r.points in HAND_VALUES)
+                if (m.isOver) break
+                assertTrue(handsPlayed++ < 30)
+                assertEquals((starter + 1) % 4, m.nextHand().starter)
+            }
+            val w = m.winnerSide!!
+            assertTrue(m.score[w] >= WINNING_SCORE)
+            assertTrue(m.score[1 - w] < WINNING_SCORE)
+        }
+    }
+
     private fun assertCardsConsistent(h: Hand) {
         val all = h.hands.flatten() + h.table.map { it.card } +
             h.tricks.flatMap { t -> t.plays.map { it.card } } + h.vira

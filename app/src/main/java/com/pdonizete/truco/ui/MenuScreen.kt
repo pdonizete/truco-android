@@ -52,7 +52,8 @@ fun MenuScreen(vm: AppViewModel) {
         )
         Text("Truco paulista para jogar com ou sem leitor de tela", fontSize = 17.sp, textAlign = TextAlign.Center)
         Spacer(Modifier.height(28.dp))
-        BigButton("Jogar contra o computador, nível ${vm.difficulty.label}", Palette.Start) { vm.startMatch() }
+        BigButton("Jogar contra o computador, nível ${vm.difficulty.label}", Palette.Start) { vm.startMatch(2) }
+        BigButton("Jogar em duplas, nível ${vm.difficulty.label}", Palette.Start) { vm.startMatch(4) }
         BigButton("Configurações") { vm.openSettings() }
         BigButton("Como jogar", Palette.Muted) { vm.openHelp() }
     }
