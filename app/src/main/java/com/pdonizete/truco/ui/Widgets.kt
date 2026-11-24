@@ -26,6 +26,7 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
@@ -44,12 +45,12 @@ fun FocusOnToken(requester: FocusRequester, token: Int) {
 
 /** Título de área, marcado como heading para o gesto de navegar por títulos. */
 @Composable
-fun SectionTitle(text: String, modifier: Modifier = Modifier, size: Int = 21) {
+fun SectionTitle(text: String, modifier: Modifier = Modifier, size: Int = 21, top: Dp = 12.dp) {
     Text(
         text,
         fontSize = size.sp,
         fontWeight = FontWeight.Bold,
-        modifier = modifier.padding(top = 12.dp, bottom = 4.dp).semantics { heading() },
+        modifier = modifier.padding(top = top, bottom = 4.dp).semantics { heading() },
     )
 }
 

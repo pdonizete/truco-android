@@ -146,11 +146,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         sfx.playShuffle()
         val gen = generation
         viewModelScope.launch(gameJobs) {
-            delay(1600)
-            repeat(6) { sfx.playDeal(); delay(140) }
-            delay(100)
+            delay(1100)
+            repeat(6) { sfx.playDeal(); delay(90) }
+            delay(60)
             sfx.playVira()
-            delay(300)
+            delay(200)
             val m = match ?: return@launch
             if (gen != generation) return@launch
             dealing = false
@@ -232,8 +232,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---------------- Computador
 
+    /** Só a última jogada agendada do computador vale; agendamentos antigos são ignorados. */
+    private var cpuTicket = 0
+
     private fun cpuLater() {
-        afterSpeech { later(if (voiceActive) 600 else 1200) { cpuAct() } }
+        val ticket = ++cpuTicket
+        afterSpeech { later(if (voiceActive) 350 else 900) { if (ticket == cpuTicket) cpuAct() } }
     }
 
     private fun cpuAct() {
