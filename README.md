@@ -45,7 +45,7 @@ Precisa do JDK 17 e do Android SDK (plataforma 35). Crie o arquivo local.propert
 
 O APK fica em app/build/outputs/apk/debug/app-debug.apk. Os testes também gravam prévias dos sons em sons-previa/. Os sons são sintetizados no código, sem arquivos de áudio.
 
-O build de release (./gradlew assembleRelease) usa a chave indicada pelas variáveis TRUCO_KEYSTORE e TRUCO_KEYSTORE_PASS. Sem elas, usa a chave de debug. Cada envio para a branch main gera uma release pelo GitHub Actions. Commits com [teste] na mensagem só geram o APK como artifact.
+O build de release (./gradlew assembleRelease) usa a chave indicada pelas variáveis TRUCO_KEYSTORE e TRUCO_KEYSTORE_PASS. Sem elas, usa a chave de debug. Cada envio para a branch main gera uma release pelo GitHub Actions. Commits com [teste] no título (a primeira linha da mensagem) só geram o APK como artifact, sem release.
 
 ## Créditos
 

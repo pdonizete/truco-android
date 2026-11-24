@@ -58,13 +58,14 @@ jobs:
             | sed 's/ *\[teste\]//' | cat -s > novidades.txt
           [ -s novidades.txt ] || echo "Melhorias internas." > novidades.txt
 
-      # Commit com [teste] na mensagem: só gera o artifact, sem release.
+      # Commit com [teste] no título (primeira linha): só gera o artifact, sem release.
       - name: Tipo de publicação
         id: tipo
         env:
           MSG: ${{ github.event.head_commit.message }}
         run: |
-          if printf '%s' "$MSG" | grep -q '\[teste\]'; then echo "teste=1" >> "$GITHUB_OUTPUT"; else echo "teste=0" >> "$GITHUB_OUTPUT"; fi
+          TITULO=$(printf '%s\n' "$MSG" | head -n 1)
+          if printf '%s' "$TITULO" | grep -q '\[teste\]'; then echo "teste=1" >> "$GITHUB_OUTPUT"; else echo "teste=0" >> "$GITHUB_OUTPUT"; fi
 
       - uses: actions/upload-artifact@v4
         with:
