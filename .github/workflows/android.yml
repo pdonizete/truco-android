@@ -1,0 +1,86 @@
+name: Android
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Um build por vez, na ordem dos envios.
+concurrency:
+  group: android-release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+
+      # A chave fica nos secrets do repositório (nunca no código), sempre a mesma,
+      # para o APK novo instalar por cima do antigo.
+      - name: Chave de assinatura
+        env:
+          KEY_B64: ${{ secrets.TRUCO_KEYSTORE_B64 }}
+          KEY_PASS: ${{ secrets.TRUCO_KEYSTORE_PASS }}
+        run: |
+          if [ -z "$KEY_B64" ] || [ -z "$KEY_PASS" ]; then
+            echo "::error::Faltam os secrets TRUCO_KEYSTORE_B64 e TRUCO_KEYSTORE_PASS."
+            exit 1
+          fi
+          printf '%s' "$KEY_B64" | base64 -d > "$RUNNER_TEMP/truco.jks"
+          echo "TRUCO_KEYSTORE=$RUNNER_TEMP/truco.jks" >> "$GITHUB_ENV"
+
+      - name: Testes e build
+        env:
+          TRUCO_KEYSTORE_PASS: ${{ secrets.TRUCO_KEYSTORE_PASS }}
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon testDebugUnitTest assembleRelease
+          cp app/build/outputs/apk/release/app-release.apk truco-acessivel.apk
+
+      # Novidades: commits desde a release anterior, sem as linhas de coautoria.
+      - name: Novidades
+        run: |
+          PREV=$(git describe --tags --abbrev=0 --match 'v1.0.*' 2>/dev/null || true)
+          if [ -n "$PREV" ]; then RANGE="$PREV..HEAD"; else RANGE="HEAD"; fi
+          git log $RANGE --no-merges --pretty='format:- %s%n%n%b' \
+            | grep -v -E '^(Co-Authored-By|Claude-Session):' \
+            | sed 's/ *\[teste\]//' | cat -s > novidades.txt
+          [ -s novidades.txt ] || echo "Melhorias internas." > novidades.txt
+
+      # Commit com [teste] na mensagem: só gera o artifact, sem release.
+      - name: Tipo de publicação
+        id: tipo
+        env:
+          MSG: ${{ github.event.head_commit.message }}
+        run: |
+          if printf '%s' "$MSG" | grep -q '\[teste\]'; then echo "teste=1" >> "$GITHUB_OUTPUT"; else echo "teste=0" >> "$GITHUB_OUTPUT"; fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: truco-acessivel-apk
+          path: truco-acessivel.apk
+
+      # Release marcada como latest: o link releases/latest/download/truco-acessivel.apk
+      # sempre baixa esta versão.
+      - name: Publicar release
+        if: steps.tipo.outputs.teste != '1'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: Truco Acessível 1.0.${{ github.run_number }}
+          prerelease: false
+          make_latest: true
+          target_commitish: ${{ github.sha }}
+          body_path: novidades.txt
+          files: truco-acessivel.apk
