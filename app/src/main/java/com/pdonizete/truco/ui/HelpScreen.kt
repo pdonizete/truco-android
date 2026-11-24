@@ -60,6 +60,13 @@ private val HELP: List<Pair<String, List<String>>> = listOf(
         "Quando a sua dupla pede truco, os adversários respondem. Quando os adversários pedem, quem responde é você.",
         "Na mão de onze da sua dupla, você ouve as cartas do parceiro antes de decidir se joga ou corre.",
     ),
+    "Bluetooth" to listOf(
+        "Um celular cria a sala e os amigos entram nela, até 4 pessoas. Quem cria a sala é o anfitrião: ele escolhe 1 contra 1 ou duplas e começa a partida.",
+        "Para entrar, toque em Entrar na sala de um amigo e escolha o nome do celular do anfitrião na lista. Se o nome não aparecer, peça ao anfitrião para tocar em Ficar visível para os amigos.",
+        "Em duplas, os lugares sem pessoa ficam com o computador, no nível escolhido pelo anfitrião. Com 3 ou mais pessoas, o anfitrião escolhe o parceiro.",
+        "Cada celular recebe só as próprias cartas e fala as jogadas do seu ponto de vista. Se alguém sair, a partida termina para todos.",
+        "No Android 11 ou anterior, a busca de aparelhos só funciona com a localização do celular ligada.",
+    ),
     "Partida" to listOf("Vence quem chegar primeiro a 12 pontos."),
     "Créditos" to listOf("Inspirado no Dominó G, de geofilho."),
 )

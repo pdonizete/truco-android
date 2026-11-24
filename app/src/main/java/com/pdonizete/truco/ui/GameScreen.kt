@@ -48,8 +48,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.pdonizete.truco.game.Card
-import com.pdonizete.truco.game.Hand
 import com.pdonizete.truco.game.Response
+import com.pdonizete.truco.game.TableView
 import com.pdonizete.truco.game.Words
 import com.pdonizete.truco.game.nextRaise
 
@@ -58,32 +58,48 @@ private class Action(val label: String, val color: Color, val onClick: () -> Uni
 /**
  * Tela de jogo. Cabe inteira na tela, sem rolar, para a exploração por toque achar tudo:
  * placar em cima, vira e mesa no meio, suas cartas e as ações fixas embaixo.
+ * Desenha a visão da mesa ([TableView]), igual no jogo local e no Bluetooth.
  */
 @Composable
 fun GameScreen(vm: AppViewModel) {
-    val askExit = rememberConfirm("Deseja sair da partida?") { vm.backToMenu() }
+    val askExit = rememberConfirm(vm.exitQuestion()) { vm.backToMenu() }
     val askRun = rememberConfirm("Deseja mesmo correr?") { vm.respond(Response.CORRER) }
     val askRunEleven = rememberConfirm(vm.runElevenQuestion()) { vm.decideEleven(false) }
     BackHandler { askExit() }
 
-    // A mão é mutável: ler [version] faz a tela se redesenhar a cada jogada.
     @Suppress("UNUSED_VARIABLE") val version = vm.version
-    val m = vm.match ?: return
-    val h = m.hand
-
     val handHeading = remember { FocusRequester() }
     val firstCard = remember { FocusRequester() }
     val firstAction = remember { FocusRequester() }
     FocusOnToken(handHeading, vm.headingFocus)
     FocusOnToken(firstCard, vm.handFocus)
     FocusOnToken(firstAction, vm.actionFocus)
-
     var choosing by remember { mutableStateOf<Card?>(null) }
-    val chosen = choosing?.takeIf { h.canPlay(ME) && it in h.hands[ME] }
+
+    val v = vm.view
+    if (v == null) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .background(Palette.Bg)
+                .safeDrawingPadding()
+                .semantics { isTraversalGroup = true }
+                .padding(20.dp),
+        ) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                SectionTitle("Esperando o anfitrião", Modifier.weight(1f), size = 22)
+                ExitButton("Sair") { askExit() }
+            }
+            Text("A partida vai começar em instantes.", fontSize = 18.sp)
+        }
+        return
+    }
+
+    val chosen = choosing?.takeIf { v.canPlay && it in v.myCards }
     if (chosen != null) {
         AlertDialog(
             onDismissRequest = { choosing = null },
-            title = { Text("Jogar ${Words.cardLower(chosen, h.vira)} aberta ou coberta?", fontSize = 20.sp) },
+            title = { Text("Jogar ${Words.cardLower(chosen, v.vira)} aberta ou coberta?", fontSize = 20.sp) },
             text = {
                 Column {
                     BigButton("Aberta", Palette.Start) { choosing = null; vm.playCard(chosen, false) }
@@ -96,26 +112,30 @@ fun GameScreen(vm: AppViewModel) {
     }
 
     val actions = buildList {
-        val p = h.pending
+        val p = v.pending
         when {
-            vm.dealing -> {}
-            m.isOver -> {
-                add(Action("Nova partida", Palette.Start) { vm.startMatch() })
-                add(Action("Voltar ao menu", Palette.Muted) { vm.backToMenu() })
+            v.dealing -> {}
+            v.matchOver -> if (vm.isGuest) {
+                add(Action("Sair da sala", Palette.Muted) { askExit() })
+            } else {
+                add(Action("Nova partida", Palette.Start) { vm.newMatch() })
+                add(Action("Voltar ao menu", Palette.Muted) { askExit() })
             }
-            h.isOver -> add(Action("Próxima mão", Palette.Start) { vm.nextHand() })
-            h.awaitingEleven && h.elevenSide == ME -> {
+            v.handOver -> add(Action("Próxima mão", Palette.Start) { vm.nextHand() })
+            v.elevenMine -> {
                 add(Action("Jogar a mão de onze", Palette.Start) { vm.decideEleven(true) })
                 add(Action("Correr da mão de onze", Palette.Danger) { askRunEleven() })
             }
-            p != null && p.responderSide == ME -> {
+            p != null && v.askedMe -> {
                 add(Action("Aceitar ${Words.raiseName(p.value)}", Palette.Start) { vm.respond(Response.ACEITAR) })
-                nextRaise(p.value)?.takeIf { h.canEscalate(ME) }?.let { up ->
+                if (v.canEscalate) nextRaise(p.value)?.let { up ->
                     add(Action("Aumentar para ${Words.raiseName(up)}", Palette.Action) { vm.respond(Response.AUMENTAR) })
                 }
                 add(Action("Correr", Palette.Danger) { askRun() })
             }
-            h.canRaise(ME) -> add(Action("Pedir ${Words.raiseName(nextRaise(h.value)!!)}", Palette.Action) { vm.raise() })
+            v.canRaise -> nextRaise(v.value)?.let { up ->
+                add(Action("Pedir ${Words.raiseName(up)}", Palette.Action) { vm.raise() })
+            }
         }
         add(Action("Repetir", Palette.Muted) { vm.describe() })
     }
@@ -126,7 +146,6 @@ fun GameScreen(vm: AppViewModel) {
             .background(Palette.Bg)
             .safeDrawingPadding(),
     ) {
-        // Tamanho das cartas a partir da tela: três cartas na largura e espaço para o resto na altura.
         val handW = minOf(
             (maxWidth - 48.dp) / 3,
             (maxHeight - 400.dp).coerceAtLeast(120.dp) * 0.45f / 1.45f,
@@ -141,23 +160,20 @@ fun GameScreen(vm: AppViewModel) {
                 .padding(horizontal = 12.dp, vertical = 4.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            // Placar. O botão Sair fica no canto, mas por último na varredura.
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 SectionTitle("Placar", size = 18, top = 4.dp)
                 Text(
-                    vm.scoreDisplay(),
+                    vm.scoreDisplay(v),
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Bold,
                     textAlign = TextAlign.Center,
                     modifier = Modifier
                         .weight(1f)
-                        .clearAndSetSemantics { contentDescription = vm.scoreDescription() },
+                        .clearAndSetSemantics { contentDescription = vm.scoreDescription(v) },
                 )
                 ExitButton("Sair") { askExit() }
             }
-            Text(vm.handValueText(h), fontSize = 16.sp, textAlign = TextAlign.Center)
-            // Linha de status. Com a voz do app ligada, o TalkBack não repete o que a voz já falou;
-            // com a voz desligada, ela vira região ativa e o TalkBack lê cada aviso.
+            Text(vm.handValueText(v), fontSize = 16.sp, textAlign = TextAlign.Center)
             Text(
                 vm.status,
                 color = Palette.Status,
@@ -176,8 +192,6 @@ fun GameScreen(vm: AppViewModel) {
                     ),
             )
 
-            // Vira à esquerda e mesa à direita. Cada coluna é um grupo, para o TalkBack ler
-            // a vira inteira antes da mesa.
             Row(
                 Modifier
                     .fillMaxWidth()
@@ -189,15 +203,15 @@ fun GameScreen(vm: AppViewModel) {
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     SectionTitle("Vira", size = 18, top = 4.dp)
-                    if (vm.dealing) {
+                    if (v.dealing) {
                         Text("Dando as cartas…", fontSize = 16.sp)
                     } else {
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier.clearAndSetSemantics { contentDescription = vm.viraText(h) },
+                            modifier = Modifier.clearAndSetSemantics { contentDescription = vm.viraText(v) },
                         ) {
-                            CardFace(h.vira, null, width = tableW)
-                            Text("Manilha: ${Words.manilha(h.vira)}", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                            CardFace(v.vira, null, width = tableW)
+                            Text("Manilha: ${Words.manilha(v.vira)}", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                         }
                     }
                 }
@@ -206,22 +220,22 @@ fun GameScreen(vm: AppViewModel) {
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     SectionTitle("Mesa", size = 18, top = 4.dp)
-                    if (!vm.dealing) TableArea(vm, h, tableW, Modifier.fillMaxWidth().weight(1f))
+                    if (!v.dealing) TableArea(vm, v, tableW, Modifier.fillMaxWidth().weight(1f))
                 }
             }
 
             SectionTitle("Suas cartas", Modifier.focusRequester(handHeading).focusable(), size = 18, top = 6.dp)
             Box(Modifier.heightIn(min = handW * 1.45f), contentAlignment = Alignment.Center) {
                 when {
-                    vm.dealing -> Text("Dando as cartas…", fontSize = 18.sp)
-                    h.hands[ME].isEmpty() -> Text("Você não tem mais cartas.", fontSize = 18.sp)
+                    v.dealing -> Text("Dando as cartas…", fontSize = 18.sp)
+                    v.myCards.isEmpty() -> Text("Você não tem mais cartas.", fontSize = 18.sp)
                     else -> Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        h.hands[ME].forEachIndexed { i, card ->
+                        v.myCards.forEachIndexed { i, card ->
                             key(card.id) {
-                                val label = vm.cardLabel(h, card, i)
+                                val label = vm.cardLabel(v, card, i)
                                 val play = { if (vm.tapCard(card)) choosing = card }
                                 CardFace(
-                                    card, h.vira, width = handW, faceDown = h.blind,
+                                    card, v.vira, width = handW, faceDown = v.blind,
                                     modifier = Modifier
                                         .then(if (i == 0) Modifier.focusRequester(firstCard) else Modifier)
                                         .clip(RoundedCornerShape(handW * 0.12f))
@@ -238,7 +252,7 @@ fun GameScreen(vm: AppViewModel) {
                 }
             }
 
-            vm.partnerCardsText(h)?.let { Text(it, fontSize = 15.sp, textAlign = TextAlign.Center) }
+            vm.partnerCardsText(v)?.let { Text(it, fontSize = 15.sp, textAlign = TextAlign.Center) }
 
             SectionTitle("Ações", size = 18, top = 6.dp)
             actions.chunked(2).forEachIndexed { r, row ->
@@ -263,18 +277,16 @@ fun GameScreen(vm: AppViewModel) {
 
 /** Cartas da rodada em andamento (ou da última rodada, se a mesa acabou de ser limpa). */
 @Composable
-private fun TableArea(vm: AppViewModel, h: Hand, cardMax: Dp, modifier: Modifier) {
-    val plays = if (h.table.isEmpty() && h.tricks.isNotEmpty()) h.tricks.last().plays else h.table
+private fun TableArea(vm: AppViewModel, v: TableView, cardMax: Dp, modifier: Modifier) {
+    val plays = if (v.table.isEmpty() && v.tricks.isNotEmpty()) v.tricks.last().plays else v.table
     BoxWithConstraints(
         modifier
             .clip(RoundedCornerShape(12.dp))
             .background(Palette.Felt)
             .padding(8.dp)
-            .clearAndSetSemantics { contentDescription = vm.tableText(h) },
+            .clearAndSetSemantics { contentDescription = vm.tableText(v) },
         contentAlignment = Alignment.Center,
     ) {
-        // Duas cartas por fileira; com 3 ou 4 cartas (duplas) são duas fileiras.
-        // O tamanho das cartas sai do espaço que a mesa tem na tela.
         val gap = 12.dp
         val rows = if (plays.size > 2) 2 else 1
         val byWidth = (maxWidth - gap) / 2
@@ -287,14 +299,14 @@ private fun TableArea(vm: AppViewModel, h: Hand, cardMax: Dp, modifier: Modifier
                     row.forEach { p ->
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Text(vm.seats.shortName(p.player), fontSize = 14.sp, maxLines = 1)
-                            CardFace(p.card, h.vira, width = cardW, faceDown = p.covered)
+                            CardFace(p.card ?: v.vira, v.vira, width = cardW, faceDown = p.card == null || p.covered)
                         }
                     }
                 }
             }
-            val line = vm.tricksLine(h)
+            val line = vm.tricksLine(v)
             if (line.isNotEmpty()) Text(line, fontSize = 14.sp, textAlign = TextAlign.Center)
-            Text(vm.othersCardsShort(h), fontSize = 14.sp, textAlign = TextAlign.Center)
+            Text(vm.othersCardsShort(v), fontSize = 14.sp, textAlign = TextAlign.Center)
         }
     }
 }
